@@ -1,69 +1,90 @@
-import Image from "next/image";
+import Link from 'next/link';
 
-export default function Home() {
+export default function HomePage() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="min-h-screen flex flex-col items-center justify-center px-4 py-16">
+      {/* Background decoration */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 overflow-hidden"
+      >
+        <div className="absolute -top-40 -right-40 h-96 w-96 rounded-full bg-indigo-600 opacity-10 blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-cyan-500 opacity-10 blur-3xl" />
+      </div>
+
+      <div className="relative z-10 w-full max-w-4xl text-center animate-fade-in-up">
+        {/* Badge */}
+        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-4 py-1.5 text-sm text-indigo-300">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-500" />
+          </span>
+          Powered by Supabase + WebAuthn
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
+
+        {/* Headline */}
+        <h1 className="mb-6 text-5xl font-bold tracking-tight sm:text-7xl">
+          <span className="bg-gradient-to-r from-indigo-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">
+            Smart Attendance
+          </span>
+          <br />
+          <span className="text-white">Portal</span>
+        </h1>
+
+        <p className="mx-auto mb-12 max-w-2xl text-lg text-gray-400 leading-relaxed">
+          Location-aware, biometric attendance management for modern campuses.
+          Students check in securely during active class windows — enforced at
+          the database level.
+        </p>
+
+        {/* Feature cards */}
+        <div className="mb-12 grid gap-4 sm:grid-cols-3 text-left">
+          {[
+            {
+              icon: '🔐',
+              title: 'WebAuthn Auth',
+              desc: 'Passwordless biometric login — fingerprint or face ID.',
+            },
+            {
+              icon: '📍',
+              title: 'Geo-fenced Classes',
+              desc: 'Students must be within 20 m of the classroom to mark attendance.',
+            },
+            {
+              icon: '🛡️',
+              title: 'RLS-Enforced Windows',
+              desc: 'Supabase RLS blocks check-ins outside the class time window — server-side.',
+            },
+          ].map((f) => (
+            <div
+              key={f.title}
+              className="glass rounded-2xl p-6 transition-all duration-300 hover:-translate-y-1 hover:glow-primary"
+            >
+              <div className="mb-3 text-3xl">{f.icon}</div>
+              <h2 className="mb-1 text-base font-semibold text-white">{f.title}</h2>
+              <p className="text-sm text-gray-400">{f.desc}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* CTA buttons */}
+        <div className="flex flex-wrap justify-center gap-4">
+          <Link
+            href="/login"
+            className="rounded-xl bg-indigo-600 px-8 py-3 font-semibold text-white shadow-lg shadow-indigo-600/30 transition-all duration-200 hover:bg-indigo-500 hover:shadow-indigo-500/40 hover:-translate-y-0.5"
+          >
+            Get Started →
+          </Link>
+          <Link
+            href="https://supabase.com/docs"
             target="_blank"
             rel="noopener noreferrer"
+            className="rounded-xl border border-white/10 bg-white/5 px-8 py-3 font-semibold text-white transition-all duration-200 hover:bg-white/10 hover:-translate-y-0.5"
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            Supabase Docs
+          </Link>
         </div>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }
