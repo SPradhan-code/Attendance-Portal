@@ -19,9 +19,10 @@ interface Props {
   onSuccess?: () => void;
   onError?: (message: string) => void;
   className?: string;
+  label?: string;
 }
 
-export function WebAuthnRegisterButton({ onSuccess, onError, className }: Props) {
+export function WebAuthnRegisterButton({ onSuccess, onError, className, label }: Props) {
   const { loading, register, clearError } = useWebAuthn();
 
   const handleClick = async () => {
@@ -77,7 +78,7 @@ export function WebAuthnRegisterButton({ onSuccess, onError, className }: Props)
             <path d="M12 5a5 5 0 0 1 5 5c0 3-1.5 5.5-5 7-3.5-1.5-5-4-5-7a5 5 0 0 1 5-5z" />
             <line x1="12" y1="9" x2="12" y2="15" />
           </svg>
-          Register Biometric Passkey
+          {label ?? 'Register Biometrics'}
         </>
       )}
     </button>

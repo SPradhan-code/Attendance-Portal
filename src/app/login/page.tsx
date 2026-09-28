@@ -3,21 +3,15 @@
 /**
  * Login page — supports three authentication paths:
  *
- *  1. WebAuthn Passkey (biometric) — available once a passkey has been registered;
- *     REQUIRED for admins to access the dashboard (enforced by role check after login)
- *  2. Magic Link (email OTP) — available to all users, including first-time setup
- *  3. Password — standard email + password via supabase.auth.signInWithPassword;
- *     fallback when the Magic Link PKCE callback is unavailable (e.g. Vercel)
- *
- * Flow for WebAuthn login:
- *   email entered → "Sign in with Passkey" clicked →
- *   useWebAuthn.authenticate() → browser prompts biometric →
- *   server verifies assertion → returns token_hash →
- *   client calls supabase.auth.verifyOtp() → full session →
- *   redirect to /dashboard
+ *  1. Password (default) — standard email + password via supabase.auth.signInWithPassword.
+ *     Checks whether an admin has a registered biometric passkey on first login and
+ *     redirects to /settings/passkey to register device biometrics if needed.
+ *  2. WebAuthn Passkey (biometric) — instant one-touch login with Face ID / Touch ID / Windows Hello
+ *     once registered.
+ *  3. Magic Link (email OTP) — alternative email OTP path.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { WebAuthnAuthButton } from '@/components/WebAuthnButton';
@@ -25,7 +19,7 @@ import type { AuthenticateResult } from '@/hooks/useWebAuthn';
 import type { Profile } from '@/types/database';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type AuthMethod = 'passkey' | 'magic-link' | 'password';
+type AuthMethod = 'password' | 'passkey' | 'magic-link';
 
 type AlertState = {
   type: 'success' | 'error' | 'info';
@@ -40,10 +34,137 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [method, setMethod] = useState<AuthMethod>('passkey');
+  const [method, setMethod] = useState<AuthMethod>('password');
   const [magicLinkLoading, setMagicLinkLoading] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [alert, setAlert] = useState<AlertState>(null);
+
+  // Restore remembered email on initial mount
+  useEffect(() => {
+    try {
+      const savedEmail = localStorage.getItem('attendance_login_email');
+      if (savedEmail) {
+        setEmail(savedEmail);
+      }
+    } catch {
+      // ignore localStorage restrictions
+    }
+  }, []);
+
+  // ── Password handler (Default active) ──────────────────────────────────────
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setPasswordLoading(true);
+    setAlert(null);
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    setPasswordLoading(false);
+
+    if (error) {
+      setAlert({ type: 'error', text: error.message });
+      return;
+    }
+
+    try {
+      localStorage.setItem('attendance_login_email', email);
+    } catch {
+      // ignore
+    }
+
+    // ── Check if user has a passkey registered ────────────────────────────────
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setAlert({ type: 'error', text: 'Could not retrieve user after login.' });
+      return;
+    }
+
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('role, webauthn_credential')
+      .eq('id', user.id)
+      .single();
+    const profile = profileRow as (Pick<Profile, 'role' | 'webauthn_credential'>) | null;
+
+    let hasPasskey = !!profile?.webauthn_credential;
+
+    // Fallback check on user_passkeys table if present
+    if (!hasPasskey) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: passkeys } = await (supabase.from('user_passkeys') as any)
+          .select('id')
+          .eq('user_id', user.id)
+          .limit(1);
+        if (passkeys && passkeys.length > 0) {
+          hasPasskey = true;
+        }
+      } catch {
+        // user_passkeys table might not exist
+      }
+    }
+
+    // ── First-Time Admin Redirect ─────────────────────────────────────────────
+    if (profile?.role === 'admin') {
+      if (!hasPasskey) {
+        // First-time admin with no passkey: immediately redirect to register biometrics
+        router.push('/settings/passkey?reason=required&first_time=true');
+      } else {
+        router.push('/dashboard');
+      }
+    } else {
+      router.push('/dashboard');
+    }
+  };
+
+  // ── WebAuthn success handler ───────────────────────────────────────────────
+  const handlePasskeySuccess = async (result: AuthenticateResult) => {
+    if (!result.token_hash) {
+      setAlert({ type: 'error', text: 'Authentication succeeded but no session token was returned.' });
+      return;
+    }
+
+    setAlert({ type: 'info', text: 'Biometric verified — creating session…' });
+
+    // Exchange the one-time token for a real Supabase session
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash: result.token_hash,
+      type: 'email',
+    });
+
+    if (error) {
+      setAlert({ type: 'error', text: `Session error: ${error.message}` });
+      return;
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setAlert({ type: 'error', text: 'Could not retrieve user after login.' });
+      return;
+    }
+
+    if (user.email) {
+      try {
+        localStorage.setItem('attendance_login_email', user.email);
+      } catch {
+        // ignore
+      }
+    }
+
+    // Successful biometric login routes directly to dashboard
+    router.push('/dashboard');
+  };
+
+  const handlePasskeyError = (message: string) => {
+    setAlert({ type: 'error', text: message });
+  };
 
   // ── Magic link handler ─────────────────────────────────────────────────────
   const handleMagicLink = async (e: React.FormEvent) => {
@@ -71,96 +192,6 @@ export default function LoginPage() {
     }
   };
 
-  // ── Password handler ───────────────────────────────────────────────────────
-  const handlePasswordLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password) return;
-    setPasswordLoading(true);
-    setAlert(null);
-
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-    setPasswordLoading(false);
-
-    if (error) {
-      setAlert({ type: 'error', text: error.message });
-      return;
-    }
-
-    // ── Role guard: admins → dashboard; students → dashboard ──
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      setAlert({ type: 'error', text: 'Could not retrieve user after login.' });
-      return;
-    }
-
-    const { data: profileRow } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .returns<Pick<Profile, 'role'>[]>()
-      .single();
-    const profile = profileRow as Pick<Profile, 'role'> | null;
-
-    if (profile?.role === 'admin') {
-      router.push('/dashboard');
-    } else {
-      router.push('/dashboard');
-    }
-  };
-
-  // ── WebAuthn success handler ───────────────────────────────────────────────
-  const handlePasskeySuccess = async (result: AuthenticateResult) => {
-    if (!result.token_hash) {
-      setAlert({ type: 'error', text: 'Authentication succeeded but no session token was returned.' });
-      return;
-    }
-
-    setAlert({ type: 'info', text: 'Biometric verified — creating session…' });
-
-    // Exchange the one-time token for a real Supabase session
-    const { error } = await supabase.auth.verifyOtp({
-      token_hash: result.token_hash,
-      type: 'email',
-    });
-
-    if (error) {
-      setAlert({ type: 'error', text: `Session error: ${error.message}` });
-      return;
-    }
-
-    // ── Role guard: admins go to dashboard; students go to their portal ──
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      setAlert({ type: 'error', text: 'Could not retrieve user after login.' });
-      return;
-    }
-
-    const { data: profileRow } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .returns<Pick<Profile, 'role'>[]>()
-      .single();
-    const profile = profileRow as Pick<Profile, 'role'> | null;
-
-    if (profile?.role === 'admin') {
-      router.push('/dashboard');
-    } else {
-      router.push('/dashboard');
-    }
-  };
-
-  const handlePasskeyError = (message: string) => {
-    setAlert({ type: 'error', text: message });
-  };
-
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen flex items-center justify-center px-4">
@@ -180,9 +211,9 @@ export default function LoginPage() {
           <p className="mt-1 text-sm text-gray-400">Sign in to continue</p>
         </div>
 
-        {/* Method tabs */}
+        {/* Method tabs: Password default first */}
         <div className="mb-6 grid grid-cols-3 gap-1 rounded-xl bg-white/5 p-1">
-          {(['passkey', 'magic-link', 'password'] as const).map((m) => (
+          {(['password', 'passkey', 'magic-link'] as const).map((m) => (
             <button
               key={m}
               id={`tab-${m}`}
@@ -194,12 +225,12 @@ export default function LoginPage() {
                   : 'text-gray-400 hover:text-gray-200'
               }`}
             >
-              {m === 'passkey' ? '🔐 Passkey' : m === 'magic-link' ? '✉️ Magic Link' : '🔑 Password'}
+              {m === 'password' ? '🔑 Password' : m === 'passkey' ? '🔐 Passkey' : '✉️ Magic Link'}
             </button>
           ))}
         </div>
 
-        {/* Email field (shared) */}
+        {/* Email field (shared across all methods) */}
         <div className="mb-4">
           <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-gray-300">
             Email address
@@ -232,62 +263,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* ── Passkey panel ─────────────────────────────────────────────── */}
-        {method === 'passkey' && (
-          <div className="space-y-3">
-            <WebAuthnAuthButton
-              email={email}
-              identityCheckOnly={false}
-              onSuccess={handlePasskeySuccess}
-              onError={handlePasskeyError}
-              label="Sign in with Passkey"
-              variant="primary"
-            />
-            <p className="text-center text-xs text-gray-500">
-              Your device biometric (Touch ID · Face ID · Windows Hello) is used
-              for authentication. No password required.
-            </p>
-            {/* Admin notice */}
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
-              <p className="text-xs text-amber-300">
-                <span className="font-semibold">Admin accounts</span> require a registered
-                passkey to access the class schedule dashboard.
-                Use the Magic Link tab to sign in for the first time and register your passkey
-                from your profile settings.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* ── Magic link panel ──────────────────────────────────────────── */}
-        {method === 'magic-link' && (
-          <form onSubmit={handleMagicLink} className="space-y-3">
-            <button
-              id="btn-magic-link"
-              type="submit"
-              disabled={magicLinkLoading || !email}
-              className="w-full rounded-xl bg-white/10 border border-white/10 py-3 font-semibold text-white transition-all duration-200 hover:bg-white/15 hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {magicLinkLoading ? (
-                <>
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                  Sending…
-                </>
-              ) : (
-                '✉️ Send Magic Link'
-              )}
-            </button>
-            <p className="text-center text-xs text-gray-500">
-              A one-time login link will be emailed to you.
-              After signing in, register your biometric passkey from your profile.
-            </p>
-          </form>
-        )}
-
-        {/* ── Password panel ────────────────────────────────────────────── */}
+        {/* ── Password panel (Default Active) ────────────────────────────── */}
         {method === 'password' && (
           <form onSubmit={handlePasswordLogin} className="space-y-3">
             <div className="relative">
@@ -343,17 +319,65 @@ export default function LoginPage() {
               )}
             </button>
             <p className="text-center text-xs text-gray-500">
-              Use your Supabase account password. Recommended when the Magic Link
-              callback is unavailable.
+              Sign in with your email and password. First-time admins will be guided to set up biometric passkey.
             </p>
           </form>
         )}
 
-        {/* Divider + passkey registration hint */}
+        {/* ── Passkey panel (Future Biometric Logins) ────────────────────── */}
+        {method === 'passkey' && (
+          <div className="space-y-3">
+            <WebAuthnAuthButton
+              email={email}
+              identityCheckOnly={false}
+              onSuccess={handlePasskeySuccess}
+              onError={handlePasskeyError}
+              label="Sign in with Passkey"
+              variant="primary"
+            />
+            <p className="text-center text-xs text-gray-400">
+              Instant login using your device biometric (Touch ID · Face ID · Windows Hello). No password required.
+            </p>
+            {!email && (
+              <p className="text-center text-xs text-amber-400/90">
+                Please enter your email above to authenticate with your registered passkey.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ── Magic link panel ──────────────────────────────────────────── */}
+        {method === 'magic-link' && (
+          <form onSubmit={handleMagicLink} className="space-y-3">
+            <button
+              id="btn-magic-link"
+              type="submit"
+              disabled={magicLinkLoading || !email}
+              className="w-full rounded-xl bg-white/10 border border-white/10 py-3 font-semibold text-white transition-all duration-200 hover:bg-white/15 hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {magicLinkLoading ? (
+                <>
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  Sending…
+                </>
+              ) : (
+                '✉️ Send Magic Link'
+              )}
+            </button>
+            <p className="text-center text-xs text-gray-500">
+              A one-time login link will be emailed to you.
+            </p>
+          </form>
+        )}
+
+        {/* First-time guidance */}
         <p className="mt-6 text-center text-xs text-gray-600">
           First time?{' '}
           <span className="text-gray-400">
-            Sign in with a Magic Link, then register your passkey from your profile.
+            Sign in with Password, then register your biometric passkey.
           </span>
         </p>
       </div>
