@@ -1,11 +1,13 @@
 'use client';
 
 /**
- * Login page — supports two authentication paths:
+ * Login page — supports three authentication paths:
  *
- *  1. Magic Link (email OTP) — available to all users, including first-time setup
- *  2. WebAuthn Passkey (biometric) — available once a passkey has been registered;
+ *  1. WebAuthn Passkey (biometric) — available once a passkey has been registered;
  *     REQUIRED for admins to access the dashboard (enforced by role check after login)
+ *  2. Magic Link (email OTP) — available to all users, including first-time setup
+ *  3. Password — standard email + password via supabase.auth.signInWithPassword;
+ *     fallback when the Magic Link PKCE callback is unavailable (e.g. Vercel)
  *
  * Flow for WebAuthn login:
  *   email entered → "Sign in with Passkey" clicked →
@@ -23,7 +25,7 @@ import type { AuthenticateResult } from '@/hooks/useWebAuthn';
 import type { Profile } from '@/types/database';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type AuthMethod = 'passkey' | 'magic-link';
+type AuthMethod = 'passkey' | 'magic-link' | 'password';
 
 type AlertState = {
   type: 'success' | 'error' | 'info';
@@ -36,8 +38,11 @@ export default function LoginPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [method, setMethod] = useState<AuthMethod>('passkey');
   const [magicLinkLoading, setMagicLinkLoading] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
   const [alert, setAlert] = useState<AlertState>(null);
 
   // ── Magic link handler ─────────────────────────────────────────────────────
@@ -63,6 +68,47 @@ export default function LoginPage() {
         type: 'success',
         text: 'Magic link sent! Check your inbox and click the link to sign in.',
       });
+    }
+  };
+
+  // ── Password handler ───────────────────────────────────────────────────────
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) return;
+    setPasswordLoading(true);
+    setAlert(null);
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    setPasswordLoading(false);
+
+    if (error) {
+      setAlert({ type: 'error', text: error.message });
+      return;
+    }
+
+    // ── Role guard: admins → dashboard; students → dashboard ──
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setAlert({ type: 'error', text: 'Could not retrieve user after login.' });
+      return;
+    }
+
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .returns<Pick<Profile, 'role'>[]>()
+      .single();
+    const profile = profileRow as Pick<Profile, 'role'> | null;
+
+    if (profile?.role === 'admin') {
+      router.push('/dashboard');
+    } else {
+      router.push('/dashboard');
     }
   };
 
@@ -135,20 +181,20 @@ export default function LoginPage() {
         </div>
 
         {/* Method tabs */}
-        <div className="mb-6 grid grid-cols-2 gap-1 rounded-xl bg-white/5 p-1">
-          {(['passkey', 'magic-link'] as const).map((m) => (
+        <div className="mb-6 grid grid-cols-3 gap-1 rounded-xl bg-white/5 p-1">
+          {(['passkey', 'magic-link', 'password'] as const).map((m) => (
             <button
               key={m}
               id={`tab-${m}`}
               type="button"
               onClick={() => { setMethod(m); setAlert(null); }}
-              className={`rounded-lg py-2 text-sm font-medium transition-all duration-200 ${
+              className={`rounded-lg py-2 text-xs font-medium transition-all duration-200 ${
                 method === m
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                   : 'text-gray-400 hover:text-gray-200'
               }`}
             >
-              {m === 'passkey' ? '🔐 Passkey' : '✉️ Magic Link'}
+              {m === 'passkey' ? '🔐 Passkey' : m === 'magic-link' ? '✉️ Magic Link' : '🔑 Password'}
             </button>
           ))}
         </div>
@@ -237,6 +283,68 @@ export default function LoginPage() {
             <p className="text-center text-xs text-gray-500">
               A one-time login link will be emailed to you.
               After signing in, register your biometric passkey from your profile.
+            </p>
+          </form>
+        )}
+
+        {/* ── Password panel ────────────────────────────────────────────── */}
+        {method === 'password' && (
+          <form onSubmit={handlePasswordLogin} className="space-y-3">
+            <div className="relative">
+              <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-gray-300">
+                Password
+              </label>
+              <input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 pr-12 text-white placeholder-gray-500 outline-none transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-3 bottom-3 text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                {showPassword ? (
+                  // Eye-off icon
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                  </svg>
+                ) : (
+                  // Eye icon
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <button
+              id="btn-password-login"
+              type="submit"
+              disabled={passwordLoading || !email || !password}
+              className="w-full rounded-xl bg-indigo-600 py-3 font-semibold text-white transition-all duration-200 hover:bg-indigo-500 hover:-translate-y-0.5 shadow-lg shadow-indigo-600/30 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {passwordLoading ? (
+                <>
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  Signing in…
+                </>
+              ) : (
+                '🔑 Sign in with Password'
+              )}
+            </button>
+            <p className="text-center text-xs text-gray-500">
+              Use your Supabase account password. Recommended when the Magic Link
+              callback is unavailable.
             </p>
           </form>
         )}
