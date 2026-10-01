@@ -2,7 +2,7 @@ import { verifyAuthenticationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { consumeChallenge } from '@/lib/webauthn/challenge-store';
-import { RP_ID, ORIGIN } from '@/lib/webauthn/config';
+import { getRpId, getOrigin } from '@/lib/webauthn/config';
 import { NextResponse } from 'next/server';
 import type { AuthenticationResponseJSON } from '@simplewebauthn/server';
 import type { WebAuthnCredential } from '@/types/database';
@@ -10,11 +10,20 @@ import type { WebAuthnCredential } from '@/types/database';
 /**
  * POST /api/webauthn/authenticate/verify
  *
- * Body: { credential: AuthenticationResponseJSON; _userId: string; identityCheckOnly?: boolean }
+ * Body: {
+ *   credential: AuthenticationResponseJSON;
+ *   _userId: string;
+ *   identityCheckOnly?: boolean;
+ *   rpId?: string;
+ *   domain?: string;
+ *   origin?: string;
+ * }
  *
  * Verifies the assertion response, updates the counter, and either:
  *  - Returns a Supabase one-time token (login flow)
  *  - Returns { verified: true } (identity-check for attendance)
+ *
+ * Dynamically resolves rpId/domain and origin.
  */
 export async function POST(request: Request) {
   try {
@@ -22,6 +31,9 @@ export async function POST(request: Request) {
       credential: AuthenticationResponseJSON;
       _userId: string;
       identityCheckOnly?: boolean;
+      rpId?: string;
+      domain?: string;
+      origin?: string;
     } = await request.json();
 
     const { credential, _userId: userId, identityCheckOnly = false } = body;
@@ -62,11 +74,36 @@ export async function POST(request: Request) {
     }
 
     // ── 3. Cryptographic verification ─────────────────────────────
+    const dynamicRpId = body.rpId || body.domain || getRpId(request);
+    const dynamicOrigin = body.origin || getOrigin(request);
+
+    const expectedRPIDs = Array.from(
+      new Set(
+        [
+          dynamicRpId,
+          getRpId(request),
+          process.env.NEXT_PUBLIC_WEBAUTHN_RP_ID,
+          'attendance-portal-jade.vercel.app',
+        ].filter(Boolean) as string[],
+      ),
+    );
+
+    const expectedOrigins = Array.from(
+      new Set(
+        [
+          dynamicOrigin,
+          getOrigin(request),
+          process.env.NEXT_PUBLIC_APP_URL,
+          'https://attendance-portal-jade.vercel.app',
+        ].filter(Boolean) as string[],
+      ),
+    );
+
     const verification = await verifyAuthenticationResponse({
       response: credential,
       expectedChallenge,
-      expectedOrigin: ORIGIN,
-      expectedRPID: RP_ID,
+      expectedOrigin: expectedOrigins,
+      expectedRPID: expectedRPIDs,
       requireUserVerification: true,
       credential: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,12 +151,14 @@ export async function POST(request: Request) {
       );
     }
 
+    const redirectOrigin = dynamicOrigin || getOrigin(request);
+
     const { data: linkData, error: linkErr } =
       await admin.auth.admin.generateLink({
         type: 'magiclink',
         email,
         options: {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+          redirectTo: `${redirectOrigin}/auth/callback`,
         },
       });
 

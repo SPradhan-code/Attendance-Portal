@@ -2,7 +2,7 @@ import { generateRegistrationOptions } from '@simplewebauthn/server';
 import { createClient } from '@/lib/supabase/server';
 import { storeChallenge } from '@/lib/webauthn/challenge-store';
 import {
-  RP_ID,
+  getRpId,
   RP_NAME,
   CHALLENGE_TTL_MS,
   AUTHENTICATOR_SELECTION,
@@ -10,7 +10,7 @@ import {
 import { NextResponse } from 'next/server';
 import type { Profile, WebAuthnCredential } from '@/types/database';
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const supabase = await createClient();
 
@@ -26,6 +26,16 @@ export async function POST() {
       );
     }
 
+    let body: { rpId?: string; domain?: string; origin?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      // Body is optional
+    }
+
+    // Dynamically resolve rpID from client payload or request host
+    const dynamicRpId = body.rpId || body.domain || getRpId(request);
+
     // Fetch existing credential to exclude (prevent duplicate registration)
     const { data: profileRow } = await supabase
       .from('profiles')
@@ -40,7 +50,7 @@ export async function POST() {
 
     const options = await generateRegistrationOptions({
       rpName: RP_NAME,
-      rpID: RP_ID,
+      rpID: dynamicRpId,
       userID: new TextEncoder().encode(user.id),
       userName: user.email ?? user.id,
       userDisplayName: profileRow?.name ?? user.email ?? 'User',

@@ -1,38 +1,55 @@
 'use client';
 
 /**
- * WebAuthnRegisterButton
+ * WebAuthnRegisterButton & WebAuthnAuthButton
  *
- * Drop-in button that prompts the user to register their device biometric
- * as a WebAuthn passkey. Requires an existing Supabase session.
+ * Drop-in buttons that prompt the user to register or authenticate
+ * their device biometric as a WebAuthn passkey.
  *
- * Props:
- *   onSuccess  – called when registration succeeds
- *   onError    – called with a user-friendly error string
- *   className  – optional extra CSS classes
+ * Dynamically uses window.location.hostname for rpId / domain and
+ * window.location.origin for origin.
  */
 
 import { useWebAuthn } from '@/hooks/useWebAuthn';
 import type { AuthenticateResult } from '@/hooks/useWebAuthn';
 
-interface Props {
+interface RegisterProps {
   onSuccess?: () => void;
   onError?: (message: string) => void;
   className?: string;
   label?: string;
+  rpId?: string;
+  domain?: string;
+  origin?: string;
 }
 
-export function WebAuthnRegisterButton({ onSuccess, onError, className, label }: Props) {
+export function WebAuthnRegisterButton({
+  onSuccess,
+  onError,
+  className,
+  label,
+  rpId,
+  domain,
+  origin,
+}: RegisterProps) {
   const { loading, register, clearError } = useWebAuthn();
 
   const handleClick = async () => {
     clearError();
-    const result = await register();
+    const dynamicRpId =
+      rpId || domain || (typeof window !== 'undefined' ? window.location.hostname : undefined);
+    const dynamicOrigin =
+      origin || (typeof window !== 'undefined' ? window.location.origin : undefined);
+
+    const result = await register({
+      rpId: dynamicRpId,
+      domain: dynamicRpId,
+      origin: dynamicOrigin,
+    });
+
     if (result.success) {
       onSuccess?.();
     } else if (result.error) {
-      // Use result.error (synchronous return value) instead of the stale
-      // hook error state, which may not have updated yet in this closure.
       onError?.(result.error);
     }
   };
@@ -87,19 +104,6 @@ export function WebAuthnRegisterButton({ onSuccess, onError, className, label }:
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * WebAuthnAuthButton
- *
- * Prompts the user to authenticate with their registered passkey.
- *
- * Props:
- *   email            – the user's email (required to look up their credential)
- *   identityCheckOnly – when true, only verifies identity (no new session)
- *   onSuccess        – called with the token_hash (for login) or undefined (identity-check)
- *   onError          – called with error message
- *   label            – button label (default: "Sign in with Passkey")
- */
-
 interface AuthProps {
   email: string;
   identityCheckOnly?: boolean;
@@ -108,6 +112,9 @@ interface AuthProps {
   label?: string;
   variant?: 'primary' | 'ghost';
   className?: string;
+  rpId?: string;
+  domain?: string;
+  origin?: string;
 }
 
 export function WebAuthnAuthButton({
@@ -118,6 +125,9 @@ export function WebAuthnAuthButton({
   label,
   variant = 'primary',
   className,
+  rpId,
+  domain,
+  origin,
 }: AuthProps) {
   const { loading, authenticate, clearError } = useWebAuthn();
 
@@ -127,11 +137,21 @@ export function WebAuthnAuthButton({
       return;
     }
     clearError();
-    const result = await authenticate(email, identityCheckOnly);
+
+    const dynamicRpId =
+      rpId || domain || (typeof window !== 'undefined' ? window.location.hostname : undefined);
+    const dynamicOrigin =
+      origin || (typeof window !== 'undefined' ? window.location.origin : undefined);
+
+    const result = await authenticate(email, identityCheckOnly, {
+      rpId: dynamicRpId,
+      domain: dynamicRpId,
+      origin: dynamicOrigin,
+    });
+
     if (result.success) {
       onSuccess?.(result);
     } else if (result.error) {
-      // Use result.error (synchronous return value) — not stale hook state.
       onError?.(result.error);
     }
   };

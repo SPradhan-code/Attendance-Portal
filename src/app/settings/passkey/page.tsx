@@ -4,15 +4,84 @@
  * /settings/passkey  –  Passkey management page
  *
  * Allows logged-in users (admin and student) to register their device
- * biometric as a WebAuthn passkey. Also shows the current credential
- * metadata (registration date, AAGUID) if one exists.
+ * biometric as a WebAuthn passkey.
+ *
+ * Dynamically resolves rpId/domain to window.location.hostname and origin
+ * to window.location.origin. No hardcoded localhost references.
  */
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { WebAuthnRegisterButton } from '@/components/WebAuthnButton';
+import {
+  getPasskeyBrowserConfig,
+  registerWebAuthnPasskey,
+  type PasskeyCustomOptions,
+  type RegisterResult,
+} from '@/hooks/useWebAuthn';
 import type { Profile, WebAuthnCredential } from '@/types/database';
+
+/**
+ * Helper to get passkey options dynamically from the browser.
+ * rpId and domain use window.location.hostname; origin uses window.location.origin.
+ */
+export function getPasskeyOptions(): PasskeyCustomOptions & {
+  domain: string;
+  rpOrigins: string[];
+} {
+  return getPasskeyBrowserConfig();
+}
+
+/**
+ * Helper function to register a passkey dynamically.
+ * Works with @simplewebauthn and attempts Supabase Passkey registration if available.
+ */
+export async function registerDevicePasskey(
+  customOptions?: PasskeyCustomOptions,
+): Promise<RegisterResult> {
+  const options = customOptions ?? getPasskeyOptions();
+  const supabase = createClient();
+
+  // Attempt Supabase passkey registration if supported by project settings
+  try {
+    const authAny = supabase.auth as unknown as {
+      mfa?: {
+        webauthn?: {
+          register?: (params: {
+            friendlyName: string;
+            webauthn: { rpId?: string; rpOrigins?: string[] };
+          }) => Promise<unknown>;
+        };
+      };
+      registerPasskey?: (params?: {
+        domain?: string;
+        rpId?: string;
+      }) => Promise<unknown>;
+    };
+
+    if (typeof authAny.mfa?.webauthn?.register === 'function') {
+      await authAny.mfa.webauthn.register({
+        friendlyName: 'Biometric Passkey',
+        webauthn: {
+          rpId: options.rpId || (typeof window !== 'undefined' ? window.location.hostname : undefined),
+          rpOrigins: options.origin ? [options.origin] : (typeof window !== 'undefined' ? [window.location.origin] : undefined),
+        },
+      });
+    } else if (typeof authAny.registerPasskey === 'function') {
+      await authAny.registerPasskey({
+        domain: options.domain || (typeof window !== 'undefined' ? window.location.hostname : undefined),
+        rpId: options.rpId || (typeof window !== 'undefined' ? window.location.hostname : undefined),
+      });
+    }
+  } catch (err) {
+    // Non-blocking: custom WebAuthn flow handles primary verification and storage
+    console.debug('[passkey] Supabase native passkey sync optional notice:', err);
+  }
+
+  // Register via WebAuthn API with dynamic domain / rpId and origin
+  return registerWebAuthnPasskey(options);
+}
 
 function PasskeySettingsContent() {
   const supabase = createClient();
@@ -26,8 +95,15 @@ function PasskeySettingsContent() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [justRegistered, setJustRegistered] = useState(false);
+  const [clientHost, setClientHost] = useState('');
+  const [clientOrigin, setClientOrigin] = useState('');
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setClientHost(window.location.hostname);
+      setClientOrigin(window.location.origin);
+    }
+
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) {
         router.push('/login');
@@ -157,6 +233,9 @@ function PasskeySettingsContent() {
                     Registered
                   </span>
                 </StatusRow>
+                <StatusRow label="Domain / Relying Party">
+                  <span className="font-mono text-xs text-indigo-300">{clientHost || 'Active Host'}</span>
+                </StatusRow>
                 <StatusRow label="Registered on">
                   <span className="text-gray-300">
                     {new Date(cred.registeredAt).toLocaleDateString(undefined, {
@@ -176,15 +255,26 @@ function PasskeySettingsContent() {
                 </StatusRow>
               </div>
             ) : (
-              <p className="text-sm text-gray-500">
-                No passkey registered yet. Use the button below to add one.
-              </p>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-500">
+                  No passkey registered yet. Use the button below to add one.
+                </p>
+                {clientHost && (
+                  <div className="text-xs text-gray-400">
+                    Active Domain:{' '}
+                    <span className="font-mono text-indigo-300">{clientHost}</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Register button */}
+          {/* Register button with dynamic rpId & origin */}
           <WebAuthnRegisterButton
             label="Register Biometrics"
+            rpId={clientHost}
+            domain={clientHost}
+            origin={clientOrigin}
             onSuccess={handleRegisterSuccess}
             onError={handleRegisterError}
           />

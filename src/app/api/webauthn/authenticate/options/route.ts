@@ -1,18 +1,20 @@
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { storeChallenge } from '@/lib/webauthn/challenge-store';
-import { RP_ID, CHALLENGE_TTL_MS } from '@/lib/webauthn/config';
+import { getRpId, CHALLENGE_TTL_MS } from '@/lib/webauthn/config';
 import { NextResponse } from 'next/server';
 import type { WebAuthnCredential } from '@/types/database';
 
 /**
  * POST /api/webauthn/authenticate/options
  *
- * Body: { email: string }
+ * Body: { email: string, rpId?: string, domain?: string, origin?: string }
  *
  * Looks up the user's stored WebAuthn credential and returns
  * PublicKeyCredentialRequestOptions for the browser to use with
  * `startAuthentication()`.
+ *
+ * Dynamically resolves rpId/domain from client or request header.
  *
  * Used for both:
  *  - Admin login (before a Supabase session exists)
@@ -20,11 +22,14 @@ import type { WebAuthnCredential } from '@/types/database';
  */
 export async function POST(request: Request) {
   try {
-    const { email } = await request.json();
+    const body = await request.json();
+    const { email } = body;
 
     if (!email || typeof email !== 'string') {
       return NextResponse.json({ error: 'email is required.' }, { status: 400 });
     }
+
+    const dynamicRpId = body.rpId || body.domain || getRpId(request);
 
     const admin = createAdminClient();
 
@@ -103,7 +108,7 @@ export async function POST(request: Request) {
 
     // ── 3. Generate challenge ──────────────────────────────────────
     const options = await generateAuthenticationOptions({
-      rpID: RP_ID,
+      rpID: dynamicRpId,
       userVerification: 'required',
       allowCredentials: [
         {
@@ -117,8 +122,6 @@ export async function POST(request: Request) {
     storeChallenge(userId, options.challenge, CHALLENGE_TTL_MS);
 
     // Return options + userId for the verify step.
-    // _userId is prefixed with _ to signal it is a private server value
-    // (not a real WebAuthn option) that the client must echo back.
     return NextResponse.json({ ...options, _userId: userId });
   } catch (err) {
     console.error('[webauthn/authenticate/options]', err);

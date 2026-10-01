@@ -3,21 +3,24 @@
 /**
  * useWebAuthn
  *
- * Reusable React hook that wraps @simplewebauthn/browser to provide:
+ * Reusable React hook and helper functions that wrap @simplewebauthn/browser to provide:
  *   - `register()`     → prompts device biometrics for passkey registration
  *   - `authenticate()` → prompts device biometrics for login or identity check
  *
- * The hook calls the server-side API routes to generate challenges and
- * verify responses. All cryptographic heavy-lifting happens server-side.
- *
- * Usage:
- *   const { loading, error, register, authenticate, clearError } = useWebAuthn();
+ * Uses window.location.hostname dynamically for rpId/domain and window.location.origin
+ * dynamically for origin. No hardcoded localhost references remain.
  */
 
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
 import { useState, useCallback } from 'react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface PasskeyCustomOptions {
+  rpId?: string;
+  domain?: string;
+  origin?: string;
+}
 
 export interface WebAuthnState {
   loading: boolean;
@@ -38,6 +41,167 @@ export interface AuthenticateResult {
   error?: string;
 }
 
+// ── Passkey / WebAuthn Helper Functions ────────────────────────────────────────
+
+/**
+ * Dynamically retrieves browser passkey configuration (rpId, domain, origin).
+ * Uses window.location.hostname and window.location.origin.
+ */
+export function getPasskeyBrowserConfig() {
+  const hostname =
+    typeof window !== 'undefined' && window.location?.hostname
+      ? window.location.hostname
+      : '';
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : '';
+
+  return {
+    rpId: hostname,
+    domain: hostname,
+    origin,
+    rpOrigins: origin ? [origin] : [],
+  };
+}
+
+/** Convert native browser / network errors into user-friendly messages. */
+export function friendlyWebAuthnError(err: unknown): string {
+  if (err instanceof Error) {
+    switch (err.name) {
+      case 'NotAllowedError':
+        return 'Biometric authentication was cancelled or not permitted.';
+      case 'SecurityError':
+        return 'Security error — make sure you are on a secure (HTTPS) origin or supported domain.';
+      case 'InvalidStateError':
+        return 'A passkey is already registered on this device.';
+      case 'AbortError':
+        return 'The operation was aborted.';
+      default:
+        return err.message || 'An unknown WebAuthn error occurred.';
+    }
+  }
+  return 'An unexpected error occurred.';
+}
+
+/**
+ * Helper to register a passkey using dynamic rpId/domain & origin.
+ */
+export async function registerWebAuthnPasskey(
+  customOptions?: PasskeyCustomOptions,
+): Promise<RegisterResult> {
+  const config = getPasskeyBrowserConfig();
+  const targetRpId = customOptions?.rpId || customOptions?.domain || config.rpId;
+  const targetOrigin = customOptions?.origin || config.origin;
+
+  // Step 1 — Fetch PublicKeyCredentialCreationOptions from server
+  const optRes = await fetch('/api/webauthn/register/options', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      rpId: targetRpId,
+      domain: targetRpId,
+      origin: targetOrigin,
+    }),
+  });
+
+  if (!optRes.ok) {
+    const { error } = await optRes.json().catch(() => ({}));
+    throw new Error(error ?? 'Failed to get registration options.');
+  }
+
+  const options = await optRes.json();
+
+  // Ensure rp.id dynamically uses window.location.hostname
+  if (targetRpId && options.rp) {
+    options.rp.id = targetRpId;
+  }
+
+  // Step 2 — Prompt native biometric (Touch ID, Face ID, Windows Hello…)
+  const credential = await startRegistration({ optionsJSON: options });
+
+  // Step 3 — Verify the attestation server-side
+  const verifyRes = await fetch('/api/webauthn/register/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      credential,
+      rpId: targetRpId,
+      domain: targetRpId,
+      origin: targetOrigin,
+    }),
+  });
+
+  if (!verifyRes.ok) {
+    const { error } = await verifyRes.json().catch(() => ({}));
+    throw new Error(error ?? 'Passkey verification failed.');
+  }
+
+  return { success: true };
+}
+
+/**
+ * Helper to authenticate with a passkey using dynamic rpId/domain & origin.
+ */
+export async function authenticateWebAuthnPasskey(
+  email: string,
+  identityCheckOnly = false,
+  customOptions?: PasskeyCustomOptions,
+): Promise<AuthenticateResult> {
+  const config = getPasskeyBrowserConfig();
+  const targetRpId = customOptions?.rpId || customOptions?.domain || config.rpId;
+  const targetOrigin = customOptions?.origin || config.origin;
+
+  // Step 1 — Fetch PublicKeyCredentialRequestOptions from server
+  const optRes = await fetch('/api/webauthn/authenticate/options', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      rpId: targetRpId,
+      domain: targetRpId,
+      origin: targetOrigin,
+    }),
+  });
+
+  if (!optRes.ok) {
+    const { error } = await optRes.json().catch(() => ({}));
+    throw new Error(error ?? 'Failed to get authentication options.');
+  }
+
+  const { _userId, ...options } = await optRes.json();
+
+  // Ensure rpId dynamically uses window.location.hostname
+  if (targetRpId) {
+    options.rpId = targetRpId;
+  }
+
+  // Step 2 — Prompt native biometric
+  const credential = await startAuthentication({ optionsJSON: options });
+
+  // Step 3 — Verify assertion server-side
+  const verifyRes = await fetch('/api/webauthn/authenticate/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      credential,
+      _userId,
+      identityCheckOnly,
+      rpId: targetRpId,
+      domain: targetRpId,
+      origin: targetOrigin,
+    }),
+  });
+
+  if (!verifyRes.ok) {
+    const { error } = await verifyRes.json().catch(() => ({}));
+    throw new Error(error ?? 'Biometric authentication failed.');
+  }
+
+  const data = await verifyRes.json();
+  return { success: true, token_hash: data.token_hash };
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useWebAuthn() {
@@ -46,128 +210,43 @@ export function useWebAuthn() {
     error: null,
   });
 
-  /** Convert native browser / network errors into user-friendly messages. */
-  const friendlyError = (err: unknown): string => {
-    if (err instanceof Error) {
-      switch (err.name) {
-        case 'NotAllowedError':
-          return 'Biometric authentication was cancelled or not permitted.';
-        case 'SecurityError':
-          return 'Security error — make sure you are on a secure (HTTPS) origin.';
-        case 'InvalidStateError':
-          return 'A passkey is already registered on this device.';
-        case 'AbortError':
-          return 'The operation was aborted.';
-        default:
-          return err.message || 'An unknown WebAuthn error occurred.';
-      }
-    }
-    return 'An unexpected error occurred.';
-  };
-
   // ── register ──────────────────────────────────────────────────────────────
+  const register = useCallback(
+    async (customOptions?: PasskeyCustomOptions): Promise<RegisterResult> => {
+      setState({ loading: true, error: null });
 
-  /**
-   * Register the current user's biometric as a passkey.
-   * The user must already have a Supabase session.
-   *
-   * @returns RegisterResult with success flag and optional error message.
-   */
-  const register = useCallback(async (): Promise<RegisterResult> => {
-    setState({ loading: true, error: null });
-
-    try {
-      // Step 1 — Fetch PublicKeyCredentialCreationOptions from server
-      const optRes = await fetch('/api/webauthn/register/options', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!optRes.ok) {
-        const { error } = await optRes.json().catch(() => ({}));
-        throw new Error(error ?? 'Failed to get registration options.');
+      try {
+        const result = await registerWebAuthnPasskey(customOptions);
+        setState({ loading: false, error: null });
+        return result;
+      } catch (err) {
+        const message = friendlyWebAuthnError(err);
+        setState({ loading: false, error: message });
+        return { success: false, error: message };
       }
-
-      const options = await optRes.json();
-
-      // Step 2 — Prompt native biometric (Touch ID, Face ID, Windows Hello…)
-      const credential = await startRegistration({ optionsJSON: options });
-
-      // Step 3 — Verify the attestation server-side
-      const verifyRes = await fetch('/api/webauthn/register/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential }),
-      });
-
-      if (!verifyRes.ok) {
-        const { error } = await verifyRes.json().catch(() => ({}));
-        throw new Error(error ?? 'Passkey verification failed.');
-      }
-
-      setState({ loading: false, error: null });
-      return { success: true };
-    } catch (err) {
-      const message = friendlyError(err);
-      setState({ loading: false, error: message });
-      return { success: false, error: message };
-    }
-  }, []);
+    },
+    [],
+  );
 
   // ── authenticate ──────────────────────────────────────────────────────────
-
-  /**
-   * Verify identity using an existing passkey.
-   *
-   * @param email            The user's email address
-   * @param identityCheckOnly If `true`, the server only verifies identity and
-   *                          does NOT generate a new Supabase session token.
-   *                          Use `true` for student attendance, `false` for login.
-   * @returns AuthenticateResult with success, optional token_hash, and optional error.
-   */
   const authenticate = useCallback(
     async (
       email: string,
       identityCheckOnly = false,
+      customOptions?: PasskeyCustomOptions,
     ): Promise<AuthenticateResult> => {
       setState({ loading: true, error: null });
 
       try {
-        // Step 1 — Fetch PublicKeyCredentialRequestOptions from server
-        const optRes = await fetch('/api/webauthn/authenticate/options', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email }),
-        });
-
-        if (!optRes.ok) {
-          const { error } = await optRes.json().catch(() => ({}));
-          throw new Error(error ?? 'Failed to get authentication options.');
-        }
-
-        const { _userId, ...options } = await optRes.json();
-
-        // Step 2 — Prompt native biometric
-        const credential = await startAuthentication({ optionsJSON: options });
-
-        // Step 3 — Verify assertion server-side
-        const verifyRes = await fetch('/api/webauthn/authenticate/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credential, _userId, identityCheckOnly }),
-        });
-
-        if (!verifyRes.ok) {
-          const { error } = await verifyRes.json().catch(() => ({}));
-          throw new Error(error ?? 'Biometric authentication failed.');
-        }
-
-        const data = await verifyRes.json();
+        const result = await authenticateWebAuthnPasskey(
+          email,
+          identityCheckOnly,
+          customOptions,
+        );
         setState({ loading: false, error: null });
-
-        return { success: true, token_hash: data.token_hash };
+        return result;
       } catch (err) {
-        const message = friendlyError(err);
+        const message = friendlyWebAuthnError(err);
         setState({ loading: false, error: message });
         return { success: false, error: message };
       }

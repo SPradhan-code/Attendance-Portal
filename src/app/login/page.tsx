@@ -330,6 +330,9 @@ export default function LoginPage() {
             <WebAuthnAuthButton
               email={email}
               identityCheckOnly={false}
+              rpId={typeof window !== 'undefined' ? window.location.hostname : undefined}
+              domain={typeof window !== 'undefined' ? window.location.hostname : undefined}
+              origin={typeof window !== 'undefined' ? window.location.origin : undefined}
               onSuccess={handlePasskeySuccess}
               onError={handlePasskeyError}
               label="Sign in with Passkey"

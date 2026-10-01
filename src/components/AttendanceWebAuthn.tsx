@@ -42,7 +42,13 @@ export function AttendanceWebAuthn({
     setMessage('');
 
     // ── Step 1: Biometric verification ───────────────────────────
-    const result = await authenticate(studentEmail, /* identityCheckOnly */ true);
+    const dynamicRpId = typeof window !== 'undefined' ? window.location.hostname : undefined;
+    const dynamicOrigin = typeof window !== 'undefined' ? window.location.origin : undefined;
+    const result = await authenticate(studentEmail, /* identityCheckOnly */ true, {
+      rpId: dynamicRpId,
+      domain: dynamicRpId,
+      origin: dynamicOrigin,
+    });
 
     if (!result.success) {
       setStatus('error');

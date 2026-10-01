@@ -2,7 +2,7 @@ import { verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { consumeChallenge } from '@/lib/webauthn/challenge-store';
-import { RP_ID, ORIGIN } from '@/lib/webauthn/config';
+import { getRpId, getOrigin } from '@/lib/webauthn/config';
 import { NextResponse } from 'next/server';
 import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import type { WebAuthnCredential } from '@/types/database';
@@ -10,10 +10,11 @@ import type { WebAuthnCredential } from '@/types/database';
 /**
  * POST /api/webauthn/register/verify
  *
- * Body: { credential: RegistrationResponseJSON }
+ * Body: { credential: RegistrationResponseJSON, rpId?: string, domain?: string, origin?: string }
  *
  * Verifies the attestation from the browser and saves the credential
  * to `profiles.webauthn_credential`. Requires an existing session.
+ * Dynamically verifies rpId and origin without hardcoded localhost.
  */
 export async function POST(request: Request) {
   try {
@@ -30,7 +31,13 @@ export async function POST(request: Request) {
     }
 
     // ── 2. Parse body ──────────────────────────────────────────────
-    const body: { credential: RegistrationResponseJSON } = await request.json();
+    const body: {
+      credential: RegistrationResponseJSON;
+      rpId?: string;
+      domain?: string;
+      origin?: string;
+    } = await request.json();
+
     if (!body.credential) {
       return NextResponse.json({ error: 'Missing credential.' }, { status: 400 });
     }
@@ -45,11 +52,36 @@ export async function POST(request: Request) {
     }
 
     // ── 4. Cryptographic verification ─────────────────────────────
+    const dynamicRpId = body.rpId || body.domain || getRpId(request);
+    const dynamicOrigin = body.origin || getOrigin(request);
+
+    const expectedRPIDs = Array.from(
+      new Set(
+        [
+          dynamicRpId,
+          getRpId(request),
+          process.env.NEXT_PUBLIC_WEBAUTHN_RP_ID,
+          'attendance-portal-jade.vercel.app',
+        ].filter(Boolean) as string[],
+      ),
+    );
+
+    const expectedOrigins = Array.from(
+      new Set(
+        [
+          dynamicOrigin,
+          getOrigin(request),
+          process.env.NEXT_PUBLIC_APP_URL,
+          'https://attendance-portal-jade.vercel.app',
+        ].filter(Boolean) as string[],
+      ),
+    );
+
     const verification = await verifyRegistrationResponse({
       response: body.credential,
       expectedChallenge,
-      expectedOrigin: ORIGIN,
-      expectedRPID: RP_ID,
+      expectedOrigin: expectedOrigins,
+      expectedRPID: expectedRPIDs,
       requireUserVerification: true,
     });
 
@@ -76,10 +108,6 @@ export async function POST(request: Request) {
     };
 
     // ── 6. Persist to profiles ────────────────────────────────────
-    //
-    // We cast the update payload to `any` because the Supabase-generated
-    // type for the JSONB `webauthn_credential` column may not exactly
-    // match our hand-crafted WebAuthnCredential interface.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: updateError } = await (supabase.from('profiles') as any)
       .update({ webauthn_credential: storedCredential })

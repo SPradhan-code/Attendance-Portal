@@ -48,10 +48,11 @@ export async function GET(
     const host =
       request.headers.get('x-forwarded-host') ||
       request.headers.get('host') ||
-      'localhost:3000';
+      process.env.VERCEL_URL ||
+      new URL(request.url).host;
     const proto =
       request.headers.get('x-forwarded-proto') ||
-      (host.includes('localhost') ? 'http' : 'https');
+      new URL(request.url).protocol.replace(':', '');
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`;
 
     const checkInUrl = `${baseUrl}/check-in?classId=${classId}&token=${token}&step=${timeStep}`;
