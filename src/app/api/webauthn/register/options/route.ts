@@ -14,12 +14,25 @@ export async function POST(request: Request) {
   try {
     const supabase = await createClient();
 
+    let user = null;
     const {
-      data: { user },
+      data: { user: cookieUser },
       error: userErr,
     } = await supabase.auth.getUser();
+    user = cookieUser;
 
-    if (userErr || !user) {
+    if (!user) {
+      const authHeader = request.headers.get('authorization');
+      if (authHeader?.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const { data: tokenData } = await supabase.auth.getUser(token);
+        if (tokenData?.user) {
+          user = tokenData.user;
+        }
+      }
+    }
+
+    if (!user) {
       return NextResponse.json(
         { error: 'You must be signed in to register a passkey.' },
         { status: 401 },

@@ -13,6 +13,7 @@
 
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
 import { useState, useCallback } from 'react';
+import { createClient } from '@/lib/supabase/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -94,10 +95,24 @@ export async function registerWebAuthnPasskey(
   const targetRpId = customOptions?.rpId || customOptions?.domain || config.rpId;
   const targetOrigin = customOptions?.origin || config.origin;
 
+  // Retrieve active Supabase session to pass Bearer token in headers
+  const supabase = createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const authHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (session?.access_token) {
+    authHeaders['Authorization'] = `Bearer ${session.access_token}`;
+  }
+
   // Step 1 — Fetch PublicKeyCredentialCreationOptions from server
   const optRes = await fetch('/api/webauthn/register/options', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders,
+    credentials: 'include',
     body: JSON.stringify({
       rpId: targetRpId,
       domain: targetRpId,
@@ -106,8 +121,8 @@ export async function registerWebAuthnPasskey(
   });
 
   if (!optRes.ok) {
-    const { error } = await optRes.json().catch(() => ({}));
-    throw new Error(error ?? 'Failed to get registration options.');
+    const errorData = await optRes.json().catch(() => ({}));
+    throw new Error(errorData.error ?? 'Failed to get registration options.');
   }
 
   const options = await optRes.json();
@@ -120,10 +135,11 @@ export async function registerWebAuthnPasskey(
   // Step 2 — Prompt native biometric (Touch ID, Face ID, Windows Hello…)
   const credential = await startRegistration({ optionsJSON: options });
 
-  // Step 3 — Verify the attestation server-side
+  // Step 3 — Verify the attestation server-side and persist credential
   const verifyRes = await fetch('/api/webauthn/register/verify', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders,
+    credentials: 'include',
     body: JSON.stringify({
       credential,
       rpId: targetRpId,
@@ -133,8 +149,10 @@ export async function registerWebAuthnPasskey(
   });
 
   if (!verifyRes.ok) {
-    const { error } = await verifyRes.json().catch(() => ({}));
-    throw new Error(error ?? 'Passkey verification failed.');
+    const errorData = await verifyRes.json().catch(() => ({}));
+    const message = errorData.error || errorData.message || 'Passkey verification failed.';
+    console.error('[useWebAuthn] Verification failed with server response:', message, errorData);
+    throw new Error(message);
   }
 
   return { success: true };
