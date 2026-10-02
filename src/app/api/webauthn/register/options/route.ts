@@ -72,7 +72,7 @@ export async function POST(request: Request) {
       excludeCredentials,
     });
 
-    storeChallenge(user.id, options.challenge, CHALLENGE_TTL_MS);
+    await storeChallenge(user.id, options.challenge, CHALLENGE_TTL_MS);
 
     return NextResponse.json(options);
   } catch (err) {

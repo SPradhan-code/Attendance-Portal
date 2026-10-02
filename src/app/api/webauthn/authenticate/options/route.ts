@@ -219,7 +219,7 @@ async function handleGenerateOptions(request: Request) {
     });
 
     // 7. Store challenge keyed by userId
-    storeChallenge(userId, options.challenge, CHALLENGE_TTL_MS);
+    await storeChallenge(userId, options.challenge, CHALLENGE_TTL_MS);
 
     // Return options + userId for the verify step
     return NextResponse.json({ ...options, _userId: userId });

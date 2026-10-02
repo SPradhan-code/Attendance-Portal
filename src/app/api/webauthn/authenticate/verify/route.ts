@@ -65,7 +65,7 @@ export async function POST(request: Request) {
     }
 
     // ── 2. Consume the challenge (replay protection) ───────────────
-    const expectedChallenge = consumeChallenge(userId);
+    const expectedChallenge = await consumeChallenge(userId);
     if (!expectedChallenge) {
       return NextResponse.json(
         { error: 'Challenge expired or not found. Please try again.' },
@@ -174,11 +174,9 @@ export async function POST(request: Request) {
       verified: true,
       token_hash: linkData.properties.hashed_token,
     });
-  } catch (err) {
-    console.error('[webauthn/authenticate/verify]', err);
-    return NextResponse.json(
-      { error: 'Internal server error during authentication.' },
-      { status: 500 },
-    );
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err || 'Internal server error during authentication.');
+    console.error('[webauthn/authenticate/verify]', msg, err);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

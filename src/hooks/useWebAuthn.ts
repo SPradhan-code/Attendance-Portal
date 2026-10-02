@@ -183,8 +183,10 @@ export async function authenticateWebAuthnPasskey(
   });
 
   if (!optRes.ok) {
-    const { error } = await optRes.json().catch(() => ({}));
-    throw new Error(error ?? 'Failed to get authentication options.');
+    const errData = await optRes.json().catch(() => ({}));
+    const errMsg = errData.error || errData.message || `Server error ${optRes.status}: Failed to get authentication options.`;
+    console.error('[useWebAuthn] authenticate/options failed:', optRes.status, errMsg, errData);
+    throw new Error(errMsg);
   }
 
   const { _userId, ...options } = await optRes.json();
@@ -212,8 +214,10 @@ export async function authenticateWebAuthnPasskey(
   });
 
   if (!verifyRes.ok) {
-    const { error } = await verifyRes.json().catch(() => ({}));
-    throw new Error(error ?? 'Biometric authentication failed.');
+    const errData = await verifyRes.json().catch(() => ({}));
+    const errMsg = errData.error || errData.message || `Server error ${verifyRes.status}: Biometric authentication failed.`;
+    console.error('[useWebAuthn] authenticate/verify failed:', verifyRes.status, errMsg, errData);
+    throw new Error(errMsg);
   }
 
   const data = await verifyRes.json();
@@ -264,7 +268,17 @@ export function useWebAuthn() {
         setState({ loading: false, error: null });
         return result;
       } catch (err) {
-        const message = friendlyWebAuthnError(err);
+        // For browser-originated WebAuthn errors (NotAllowedError, SecurityError, etc.)
+        // use the friendly message. For server errors (HTTP responses) preserve err.message
+        // verbatim so the exact backend reason is shown in the UI.
+        const isBrowserWebAuthnError =
+          err instanceof Error &&
+          ['NotAllowedError', 'SecurityError', 'InvalidStateError', 'AbortError'].includes(err.name);
+        const message = isBrowserWebAuthnError
+          ? friendlyWebAuthnError(err)
+          : err instanceof Error
+          ? err.message
+          : 'An unexpected error occurred.';
         setState({ loading: false, error: message });
         return { success: false, error: message };
       }

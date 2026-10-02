@@ -70,7 +70,7 @@ export async function POST(request: Request) {
     }
 
     // ── 3. Consume the stored challenge (replay protection) ────────
-    const expectedChallenge = consumeChallenge(userId);
+    const expectedChallenge = await consumeChallenge(userId);
     if (!expectedChallenge) {
       console.error('[webauthn/register/verify] Challenge expired or not found for user:', userId);
       return NextResponse.json(
