@@ -81,8 +81,8 @@ async function handleGenerateOptions(request: Request) {
 
     // Fast path: Check profiles table by email
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: profileByEmail, error: profileErr } = await (admin.from('profiles') as any)
+      const { data: profileByEmail, error: profileErr } = await admin
+        .from('profiles')
         .select('id, webauthn_credential')
         .eq('email', normalizedEmail)
         .maybeSingle();
@@ -94,7 +94,7 @@ async function handleGenerateOptions(request: Request) {
         );
       } else if (profileByEmail) {
         userId = profileByEmail.id;
-        cred = (profileByEmail as any)?.webauthn_credential ?? null;
+        cred = profileByEmail.webauthn_credential ?? null;
       }
     } catch (err) {
       console.warn('[webauthn/authenticate/options] profiles lookup exception:', err);
@@ -153,14 +153,14 @@ async function handleGenerateOptions(request: Request) {
     // 5. Look up user's registered passkey credentials
     if (!cred) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: profileRow, error: pRowErr } = await (admin.from('profiles') as any)
+        const { data: profileRow, error: pRowErr } = await admin
+          .from('profiles')
           .select('webauthn_credential')
           .eq('id', userId)
           .maybeSingle();
 
         if (!pRowErr && profileRow) {
-          cred = (profileRow as any)?.webauthn_credential ?? null;
+          cred = profileRow.webauthn_credential ?? null;
         }
       } catch (err) {
         console.warn('[webauthn/authenticate/options] profiles by userId exception:', err);
@@ -181,8 +181,8 @@ async function handleGenerateOptions(request: Request) {
 
     // Check user_passkeys table as well (if present)
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: passkeys } = await (admin.from('user_passkeys') as any)
+      const { data: passkeys } = await admin
+        .from('user_passkeys')
         .select('id, credential_id, transports')
         .eq('user_id', userId);
 

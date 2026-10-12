@@ -35,10 +35,14 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Redirect unauthenticated users to /login (except auth routes)
+  // Redirect unauthenticated users to /login (except auth routes and API routes).
+  // API routes must NOT be redirected — they handle their own auth and must
+  // return JSON. Redirecting them to /login causes 307→HTML responses that
+  // break JSON fetch calls (e.g. passkey options called from the login page).
   const isAuthRoute =
     request.nextUrl.pathname.startsWith('/login') ||
-    request.nextUrl.pathname.startsWith('/auth');
+    request.nextUrl.pathname.startsWith('/auth') ||
+    request.nextUrl.pathname.startsWith('/api/');
 
   if (!user && !isAuthRoute) {
     const url = request.nextUrl.clone();

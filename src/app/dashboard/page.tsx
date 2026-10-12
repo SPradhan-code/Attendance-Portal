@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { AttendanceWebAuthn } from '@/components/AttendanceWebAuthn';
 import { AdminSessionManager } from '@/components/AdminSessionManager';
-import type { Class, Profile } from '@/types/database';
+import type { AttendanceStatus, Class, Profile } from '@/types/database';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -223,7 +223,7 @@ export default async function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {attendanceHistory.map((rec: any) => (
+                {attendanceHistory.map((rec: { id: string; timestamp: string; status: AttendanceStatus; classes?: { name?: string } | null }) => (
                   <tr key={rec.id} className="border-b border-white/5 hover:bg-white/5">
                     <td className="px-5 py-3 text-white">{rec.classes?.name ?? '—'}</td>
                     <td className="px-5 py-3 text-gray-400">

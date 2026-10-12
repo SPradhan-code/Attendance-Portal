@@ -88,13 +88,15 @@ export async function GET(
       .eq('role', 'student')
       .order('roll_number', { ascending: true, nullsFirst: false });
 
-    const attendanceMap = new Map<string, any>();
-    (attendanceList || []).forEach((att: any) => {
+    type AttendanceItem = NonNullable<typeof attendanceList>[number];
+    const attendanceMap = new Map<string, AttendanceItem>();
+    (attendanceList || []).forEach((att: AttendanceItem) => {
       attendanceMap.set(att.student_id, att);
     });
 
     // Merge into complete roster
-    const roster = (allStudents || []).map((student: any) => {
+    type StudentItem = NonNullable<typeof allStudents>[number];
+    const roster = (allStudents || []).map((student: StudentItem) => {
       const record = attendanceMap.get(student.id);
       if (record) {
         return {
@@ -126,9 +128,9 @@ export async function GET(
       };
     });
 
-    const presentCount = roster.filter((r: any) => r.status === 'present').length;
-    const lateCount = roster.filter((r: any) => r.status === 'late').length;
-    const absentCount = roster.filter((r: any) => r.status === 'absent').length;
+    const presentCount = roster.filter((r: (typeof roster)[number]) => r.status === 'present').length;
+    const lateCount = roster.filter((r: (typeof roster)[number]) => r.status === 'late').length;
+    const absentCount = roster.filter((r: (typeof roster)[number]) => r.status === 'absent').length;
 
     return NextResponse.json({
       classId,

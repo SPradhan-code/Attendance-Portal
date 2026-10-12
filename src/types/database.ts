@@ -16,7 +16,7 @@ export type AuthenticatorTransportFuture =
  * Shape stored in `profiles.webauthn_credential` JSONB column.
  * All Uint8Arrays are serialised as base64url strings.
  */
-export interface WebAuthnCredential {
+export type WebAuthnCredential = {
   /** base64url-encoded credential ID */
   id: string;
   /** base64url-encoded COSE public key */
@@ -29,9 +29,9 @@ export interface WebAuthnCredential {
   aaguid?: string;
   /** ISO timestamp when the credential was registered */
   registeredAt: string;
-}
+};
 
-export interface Profile {
+export type Profile = {
   id: string;
   role: UserRole;
   name: string;
@@ -40,9 +40,9 @@ export interface Profile {
   webauthn_credential: WebAuthnCredential | null;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface Class {
+export type Class = {
   id: string;
   name: string;
   latitude: number;
@@ -59,9 +59,9 @@ export interface Class {
   session_token_secret?: string | null;
   is_session_active?: boolean | null;
   session_started_at?: string | null;
-}
+};
 
-export interface Attendance {
+export type Attendance = {
   id: string;
   class_id: string;
   student_id: string;
@@ -73,7 +73,7 @@ export interface Attendance {
   distance_meters?: number | null;
   altitude_diff_meters?: number | null;
   verification_method?: string | null;
-}
+};
 
 // ── Supabase Database generic ────────────────────────────────────────────────
 //
@@ -81,7 +81,7 @@ export interface Attendance {
 // Each table needs Row, Insert, Update, and Relationships.
 // Views need Row and Relationships.
 //
-export interface Database {
+export type Database = {
   public: {
     Tables: {
       profiles: {
@@ -191,6 +191,70 @@ export interface Database {
             referencedColumns: ['id'];
           },
         ];
+      };
+      user_passkeys: {
+        Row: {
+          id: string;
+          user_id: string;
+          credential_id?: string;
+          public_key?: string;
+          counter?: number;
+          transports?: AuthenticatorTransportFuture[] | string[] | null;
+          aaguid?: string | null;
+          created_at?: string;
+        };
+        Insert: {
+          id: string;
+          user_id: string;
+          credential_id?: string;
+          public_key?: string;
+          counter?: number;
+          transports?: AuthenticatorTransportFuture[] | string[] | null;
+          aaguid?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          credential_id?: string;
+          public_key?: string;
+          counter?: number;
+          transports?: AuthenticatorTransportFuture[] | string[] | null;
+          aaguid?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'user_passkeys_user_id_fkey';
+            columns: ['user_id'];
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      webauthn_challenges: {
+        Row: {
+          id?: string;
+          user_id: string;
+          challenge: string;
+          expires_at: string;
+          created_at?: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          challenge: string;
+          expires_at: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          challenge?: string;
+          expires_at?: string;
+          created_at?: string;
+        };
+        Relationships: [];
       };
     };
     Views: {

@@ -31,7 +31,7 @@ function CheckInContent() {
 
   // Computed 3D telemetry
   const [telemetry, setTelemetry] = useState<{
-    distanceMeters: number;
+    distanceMeters: number | null;
     altitudeDiffMeters: number | null;
     horizontalPass: boolean;
     altitudePass: boolean;
@@ -137,7 +137,7 @@ function CheckInContent() {
           sessionLng,
         );
 
-        const horizontalPass = distanceMeters <= 15;
+        const horizontalPass = distanceMeters !== null && distanceMeters <= 15;
 
         // Compute vertical altitude difference
         let altitudePass = true;
@@ -217,7 +217,9 @@ function CheckInContent() {
       setCheckInResult({
         success: true,
         timestamp: data.telemetry?.timestamp || new Date().toISOString(),
-        distanceMeters: data.telemetry?.distanceMeters || telemetry.distanceMeters.toFixed(2),
+        distanceMeters:
+          data.telemetry?.distanceMeters ||
+          (telemetry.distanceMeters != null ? telemetry.distanceMeters.toFixed(2) : 'N/A'),
         altitudeDiffMeters:
           data.telemetry?.altitudeDiffMeters ||
           (telemetry.altitudeDiffMeters != null ? telemetry.altitudeDiffMeters.toFixed(2) : 'N/A'),
@@ -328,7 +330,9 @@ function CheckInContent() {
                       : 'text-gray-500'
                   }`}
                 >
-                  {telemetry ? `${telemetry.distanceMeters.toFixed(1)} m` : 'Calculating...'}
+                  {telemetry && telemetry.distanceMeters != null
+                    ? `${telemetry.distanceMeters.toFixed(1)} m`
+                    : 'Calculating...'}
                   {' '}(Limit: 15m)
                 </span>
               </div>
@@ -342,9 +346,10 @@ function CheckInContent() {
                       : 'bg-indigo-500'
                   }`}
                   style={{
-                    width: telemetry
-                      ? `${Math.min(100, (telemetry.distanceMeters / 15) * 100)}%`
-                      : '0%',
+                    width:
+                      telemetry && telemetry.distanceMeters != null
+                        ? `${Math.min(100, (telemetry.distanceMeters / 15) * 100)}%`
+                        : '0%',
                   }}
                 />
               </div>
@@ -427,7 +432,7 @@ function CheckInContent() {
               <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
                 <span>⚠️</span>
                 <span>
-                  Outside classroom perimeter ({telemetry.distanceMeters.toFixed(1)}m away).
+                  Outside classroom perimeter ({telemetry.distanceMeters != null ? `${telemetry.distanceMeters.toFixed(1)}m` : 'Unknown distance'} away).
                   Please walk into the classroom to mark attendance.
                 </span>
               </div>

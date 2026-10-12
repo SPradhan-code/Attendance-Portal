@@ -21,8 +21,8 @@ export async function GET() {
 
     const admin = createAdminClient();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: students, error } = await (admin.from('profiles') as any)
+    const { data: students, error } = await admin
+      .from('profiles')
       .select('id, name, email, roll_number, role, webauthn_credential, created_at')
       .eq('role', 'student')
       .order('roll_number', { ascending: true, nullsFirst: false });
@@ -31,7 +31,7 @@ export async function GET() {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const formatted = (students || []).map((s: any) => ({
+    const formatted = (students || []).map((s) => ({
       id: s.id,
       name: s.name,
       email: s.email,

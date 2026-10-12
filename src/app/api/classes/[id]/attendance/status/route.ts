@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { NextResponse } from 'next/server';
-import type { AttendanceStatus } from '@/types/database';
+import type { Attendance, AttendanceStatus } from '@/types/database';
 
 interface StatusTogglePayload {
   studentId: string;
@@ -71,19 +71,19 @@ export async function PATCH(
     }
 
     // Check if attendance record already exists
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existingRecord } = await (admin.from('attendance') as any)
+    const { data: existingRecord } = await admin
+      .from('attendance')
       .select('id, status')
       .eq('class_id', classId)
       .eq('student_id', studentId)
       .maybeSingle();
 
-    let resultRecord: any;
+    let resultRecord: Attendance | null = null;
 
     if (existingRecord) {
       // Update existing record
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: updated, error: updateErr } = await (admin.from('attendance') as any)
+      const { data: updated, error: updateErr } = await admin
+        .from('attendance')
         .update({
           status,
           verification_method: 'professor_manual_override',
@@ -102,8 +102,8 @@ export async function PATCH(
       resultRecord = updated;
     } else {
       // Create new attendance record with professor manual override
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: inserted, error: insertErr } = await (admin.from('attendance') as any)
+      const { data: inserted, error: insertErr } = await admin
+        .from('attendance')
         .insert({
           class_id: classId,
           student_id: studentId,

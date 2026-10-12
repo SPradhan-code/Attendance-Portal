@@ -113,7 +113,7 @@ async function seedStudents() {
       }
 
       // 2. Upsert profile record
-      const { error: profileErr } = await (supabaseAdmin.from('profiles') as any).upsert(
+      const { error: profileErr } = await supabaseAdmin.from('profiles').upsert(
         {
           id: user.id,
           name: student.name,
