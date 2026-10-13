@@ -3,7 +3,6 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { storeChallenge } from '@/lib/webauthn/challenge-store';
 import { getRpId, CHALLENGE_TTL_MS } from '@/lib/webauthn/config';
 import { NextResponse } from 'next/server';
-import type { AuthenticatorTransportFuture, WebAuthnCredential } from '@/types/database';
 
 /**
  * Generates WebAuthn / Passkey authentication options for a user.
@@ -13,9 +12,9 @@ import type { AuthenticatorTransportFuture, WebAuthnCredential } from '@/types/d
  *  - URL parameters: ?email=...&rpId=...
  *
  * Server-side lookup:
- *  - Uses Supabase Service Role key (SUPABASE_SERVICE_ROLE_KEY)
- *  - Queries profiles table and auth.admin to find the user
- *  - Queries user's registered passkey credentials (profiles & user_passkeys)
+ *  - Uses Supabase Service Role client (SUPABASE_SERVICE_ROLE_KEY)
+ *  - Resolves user_id from profiles or auth.users via email
+ *  - Queries passkeys table for registered passkey credentials
  *  - Wraps in try/catch and returns explicit JSON error messages ({ error: err.message })
  */
 async function handleGenerateOptions(request: Request) {
@@ -63,166 +62,76 @@ async function handleGenerateOptions(request: Request) {
 
     const dynamicRpId = rpId || domain || getRpId(request);
 
-    // 3. Initialize Supabase Admin client with SUPABASE_SERVICE_ROLE_KEY
-    let admin;
-    try {
-      admin = createAdminClient();
-    } catch (clientErr: unknown) {
-      const msg = clientErr instanceof Error ? clientErr.message : String(clientErr);
-      console.error('[webauthn/authenticate/options] Admin client init error:', msg);
-      return NextResponse.json({ error: msg }, { status: 500 });
-    }
+    // Initialize Supabase Admin client (Service Role, bypassing RLS)
+    const adminDb = createAdminClient();
 
-    const normalizedEmail = email.toLowerCase();
+    // 1. Get profile/user ID from email
+    let { data: profile } = await adminDb
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .single();
 
-    // 4. Look up user by email server-side
-    let userId: string | null = null;
-    let cred: WebAuthnCredential | null = null;
-
-    // Fast path: Check profiles table by email
-    try {
-      const { data: profileByEmail, error: profileErr } = await admin
+    if (!profile && email.toLowerCase() !== email) {
+      const { data: pLower } = await adminDb
         .from('profiles')
-        .select('id, webauthn_credential')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
-
-      if (profileErr) {
-        console.warn(
-          '[webauthn/authenticate/options] profiles query warning:',
-          profileErr.message,
-        );
-      } else if (profileByEmail) {
-        userId = profileByEmail.id;
-        cred = profileByEmail.webauthn_credential ?? null;
-      }
-    } catch (err) {
-      console.warn('[webauthn/authenticate/options] profiles lookup exception:', err);
-    }
-
-    // Fallback path: search auth.users via admin.auth.admin.listUsers across pages
-    if (!userId) {
-      let page = 1;
-      const perPage = 50;
-      while (page <= 20) {
-        const { data: listData, error: listErr } = await admin.auth.admin.listUsers({
-          page,
-          perPage,
-        });
-
-        if (listErr) {
-          throw new Error(`Failed to query user accounts: ${listErr.message}`);
-        }
-
-        if (!listData?.users?.length) {
-          break;
-        }
-
-        const found = listData.users.find(
-          (u) => u.email?.trim().toLowerCase() === normalizedEmail,
-        );
-
-        if (found) {
-          userId = found.id;
-          // Best-effort backfill email into profiles table so future lookups are O(1)
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (admin.from('profiles') as any)
-              .update({ email: normalizedEmail })
-              .eq('id', found.id);
-          } catch {
-            // Non-fatal if update fails
-          }
-          break;
-        }
-
-        if (listData.users.length < perPage) {
-          break;
-        }
-        page++;
+        .select('id')
+        .eq('email', email.toLowerCase())
+        .single();
+      if (pLower) {
+        profile = pLower;
       }
     }
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'No account found with this email. Please check your email or sign in with password.' },
-        { status: 404 },
-      );
-    }
-
-    // 5. Look up user's registered passkey credentials
-    if (!cred) {
+    if (!profile) {
+      // Resolve user_id from auth.users fallback via email
       try {
-        const { data: profileRow, error: pRowErr } = await admin
-          .from('profiles')
-          .select('webauthn_credential')
-          .eq('id', userId)
-          .maybeSingle();
-
-        if (!pRowErr && profileRow) {
-          cred = profileRow.webauthn_credential ?? null;
+        const { data: listData } = await adminDb.auth.admin.listUsers();
+        const found = listData?.users?.find(
+          (u) => u.email?.trim().toLowerCase() === email.trim().toLowerCase()
+        );
+        if (found) {
+          profile = { id: found.id };
         }
-      } catch (err) {
-        console.warn('[webauthn/authenticate/options] profiles by userId exception:', err);
+      } catch {
+        // ignore
       }
     }
 
-    const allowCredentials: Array<{
-      id: string;
-      transports?: AuthenticatorTransportFuture[];
-    }> = [];
-
-    if (cred && cred.id) {
-      allowCredentials.push({
-        id: cred.id,
-        transports: cred.transports,
-      });
-    }
-
-    // Check user_passkeys table as well (if present)
-    try {
-      const { data: passkeys } = await admin
-        .from('user_passkeys')
-        .select('id, credential_id, transports')
-        .eq('user_id', userId);
-
-      if (passkeys && Array.isArray(passkeys)) {
-        for (const pk of passkeys) {
-          const credId = pk.credential_id || pk.id;
-          if (credId && !allowCredentials.some((c) => c.id === credId)) {
-            allowCredentials.push({
-              id: credId,
-              transports: pk.transports as AuthenticatorTransportFuture[] | undefined,
-            });
-          }
-        }
-      }
-    } catch {
-      // user_passkeys table might not exist in database, non-fatal
-    }
-
-    if (allowCredentials.length === 0) {
+    if (!profile) {
       return NextResponse.json(
         { error: 'No passkey registered for this account. Please sign in and register a passkey first.' },
-        { status: 404 },
+        { status: 404 }
       );
     }
 
-    // 6. Generate challenge using SimpleWebAuthn
+    // 2. Fetch credentials from passkeys table
+    const { data: userPasskeys } = await adminDb
+      .from('passkeys')
+      .select('credential_id, public_key, counter')
+      .eq('user_id', profile.id);
+
+    if (!userPasskeys || userPasskeys.length === 0) {
+      return NextResponse.json(
+        { error: 'No passkey registered for this account. Please sign in and register a passkey first.' },
+        { status: 404 }
+      );
+    }
+
+    // 3. Generate challenge using SimpleWebAuthn
     const options = await generateAuthenticationOptions({
       rpID: dynamicRpId,
       userVerification: 'required',
-      allowCredentials: allowCredentials.map((c) => ({
-        id: c.id,
-        transports: c.transports,
+      allowCredentials: userPasskeys.map((pk) => ({
+        id: pk.credential_id,
       })),
     });
 
-    // 7. Store challenge keyed by userId
-    await storeChallenge(userId, options.challenge, CHALLENGE_TTL_MS);
+    // 4. Store challenge keyed by userId
+    await storeChallenge(profile.id, options.challenge, CHALLENGE_TTL_MS);
 
     // Return options + userId for the verify step
-    return NextResponse.json({ ...options, _userId: userId });
+    return NextResponse.json({ ...options, _userId: profile.id });
   } catch (err: unknown) {
     const errorMessage =
       err instanceof Error
