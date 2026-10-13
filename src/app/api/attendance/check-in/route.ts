@@ -63,7 +63,19 @@ export const POST = withAuth(async (request, { user }) => {
     return NextResponse.json({ error: 'Profile not found.' }, { status: 404 });
   }
 
-  if (!profile.webauthn_credential) {
+  let hasPasskey = Boolean(profile.webauthn_credential);
+  if (!hasPasskey) {
+    const { count } = await admin
+      .from('passkeys')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id);
+
+    if (count && count > 0) {
+      hasPasskey = true;
+    }
+  }
+
+  if (!hasPasskey) {
     return NextResponse.json(
       {
         error:
@@ -116,11 +128,14 @@ export const POST = withAuth(async (request, { user }) => {
     );
   }
 
-  // ── Verify rotating QR token ──────────────────────────────────────────────
-  const secret =
-    classRow.session_token_secret ||
-    process.env.SESSION_SECRET ||
-    'attendance-default-secret-key-32b';
+  const secret = classRow.session_token_secret || process.env.SESSION_SECRET;
+
+  if (!secret) {
+    return NextResponse.json(
+      { error: 'Session token secret is not configured.' },
+      { status: 500 },
+    );
+  }
 
   const tokenVerification = verifyRotatingToken(classId, token, secret);
   if (!tokenVerification.valid) {

@@ -48,14 +48,34 @@ export async function POST(request: Request) {
     const admin = createAdminClient();
 
     // ── 1. Fetch stored credential ─────────────────────────────────
-    const { data: profileRow } = await admin
-      .from('profiles')
-      .select('webauthn_credential')
-      .eq('id', userId)
-      .single();
+    let storedCred: WebAuthnCredential | null = null;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const storedCred: WebAuthnCredential | null = (profileRow as any)?.webauthn_credential ?? null;
+    // Check passkeys table first
+    const { data: passkeyRow } = await admin
+      .from('passkeys')
+      .select('credential_id, public_key, counter, created_at')
+      .eq('user_id', userId)
+      .eq('credential_id', credential.id)
+      .maybeSingle();
+
+    if (passkeyRow) {
+      storedCred = {
+        id: passkeyRow.credential_id,
+        publicKey: passkeyRow.public_key,
+        counter: Number(passkeyRow.counter ?? 0),
+        registeredAt: passkeyRow.created_at || new Date().toISOString(),
+      };
+    } else {
+      // Fallback: check profiles table
+      const { data: profileRow } = await admin
+        .from('profiles')
+        .select('webauthn_credential')
+        .eq('id', userId)
+        .maybeSingle();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      storedCred = (profileRow as any)?.webauthn_credential ?? null;
+    }
 
     if (!storedCred) {
       return NextResponse.json(
@@ -130,10 +150,26 @@ export async function POST(request: Request) {
       counter: authenticationInfo.newCounter,
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin.from('profiles') as any)
-      .update({ webauthn_credential: updatedCred })
-      .eq('id', userId);
+    // Update in passkeys table
+    try {
+      await admin
+        .from('passkeys')
+        .update({ counter: authenticationInfo.newCounter })
+        .eq('user_id', userId)
+        .eq('credential_id', credential.id);
+    } catch (passkeyUpdateErr) {
+      console.warn('[webauthn/authenticate/verify] passkeys counter update warning:', passkeyUpdateErr);
+    }
+
+    // Also update profiles table
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (admin.from('profiles') as any)
+        .update({ webauthn_credential: updatedCred })
+        .eq('id', userId);
+    } catch {
+      // Non-fatal
+    }
 
     // ── 5a. Identity-check only (e.g. student attendance) ──────────
     if (identityCheckOnly) {

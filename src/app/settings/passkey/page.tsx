@@ -238,9 +238,11 @@ function PasskeySettingsContent() {
                 </StatusRow>
                 <StatusRow label="Registered on">
                   <span className="text-gray-300">
-                    {new Date(cred.registeredAt).toLocaleDateString(undefined, {
-                      year: 'numeric', month: 'long', day: 'numeric',
-                    })}
+                    {cred.registeredAt
+                      ? new Date(cred.registeredAt).toLocaleDateString(undefined, {
+                          year: 'numeric', month: 'long', day: 'numeric',
+                        })
+                      : 'Active'}
                   </span>
                 </StatusRow>
                 {cred.aaguid && cred.aaguid !== '00000000-0000-0000-0000-000000000000' && (

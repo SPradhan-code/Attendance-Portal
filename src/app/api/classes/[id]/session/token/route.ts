@@ -35,8 +35,14 @@ export async function GET(
 
     const secret =
       classRow.session_token_secret ||
-      process.env.SESSION_SECRET ||
-      'attendance-default-secret-key-32b';
+      process.env.SESSION_SECRET;
+
+    if (!secret) {
+      return NextResponse.json(
+        { error: 'Session token secret is not configured.' },
+        { status: 500 },
+      );
+    }
 
     const now = Date.now();
     const { token, timeStep, expiresAt } = generateRotatingToken(

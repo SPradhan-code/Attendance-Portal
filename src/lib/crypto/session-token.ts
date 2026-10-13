@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 export const ROTATING_WINDOW_MS = 3000; // 3 seconds
-export const ALLOWED_DRIFT_WINDOWS = 2; // Allow ±2 windows (up to 9 seconds) for scan/network delay
+export const ALLOWED_DRIFT_WINDOWS = 1; // Enforce time window step ±1 for tight replay prevention
 
 /**
  * Returns the current rotating time step (incremented every 3000ms)

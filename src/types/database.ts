@@ -28,7 +28,7 @@ export type WebAuthnCredential = {
   /** Authenticator AAGUID (device model identifier) */
   aaguid?: string;
   /** ISO timestamp when the credential was registered */
-  registeredAt: string;
+  registeredAt?: string;
 };
 
 export type Profile = {
